@@ -7,6 +7,7 @@ output: github_document
 
 ```{r setup, include=FALSE, message=FALSE}
 library(tidyverse)
+library(modelr)
 
 knitr::opts_chunk$set(
 	echo = TRUE,
@@ -116,7 +117,7 @@ weather_df_bootstrap |>
     lower_CI = quantile(r.squared, 0.025),
     upper_CI = quantile(r.squared, 0.975)
   ) |>
-  knitr::kable(caption = "the 95% confidence interval for r squared")
+  knitr::kable(caption = "Table 1, the 95% confidence interval for r squared")
 
 #CI of log_beta
 weather_df_bootstrap |>
@@ -125,9 +126,100 @@ weather_df_bootstrap |>
     lower_CI = quantile(log_beta, 0.025),
     upper_CI = quantile(log_beta, 0.975)
   ) |>
-  knitr::kable(caption = "the 95% confidence interval for log_beta")
+  knitr::kable(caption = "Table 2, the 95% confidence interval for log_beta")
 ```
 
 Two tables above identified the 95% confidence interval for $\hat{r}^{2}$ and $log(\hat{\beta _{1}}\times\hat{\beta _{2}})$.
 
+# Problem 3
 
+### Load and clean the data for regression analysis 
+
+```{r message=FALSE}
+#load and tidy the data
+birthweight_df = 
+  read_csv("./data/birthweight.csv") |>
+  janitor::clean_names() |>
+  mutate(
+    babysex = as.factor(babysex),
+    frace = as.factor(frace),
+    malform = as.factor(malform),
+    mrace = as.factor(mrace)
+  ) |>
+  drop_na()
+```
+
+### Propose a regression model for birthweight. This model may be based on a hypothesized structure for the factors that underly birthweight, on a data-driven model-building process, or a combination of the two.
+
+Based on the data set, from my point of view, the birthweights of babies may be affected by babies' body types, gestational age in weeks, health conditions, as well as the physical condition and behavior of the mothers. In this case, I've chosen the variables `bhead`, `blength`, `gaweeks`, `malform`, `mheight`, `momage`, `ppbmi`, `ppwt`, `smoken` as predictor to predict birth weight, and fit the data to a multiple linear regression model.
+
+```{r}
+# fit MLR 
+birthweight_MLR = 
+  birthweight_df |>
+  lm(bwt ~ bhead + blength + gaweeks + 
+                       malform + mheight + momage + 
+                       ppbmi + ppwt + smoken, data = _)
+birthweight_MLR |>
+  broom::tidy() |>
+  knitr::kable()
+```
+
+### plot of model residuals against fitted values
+
+```{r message=FALSE}
+#plot of model residuals against fitted values
+birthweight_df |>
+  add_predictions(birthweight_MLR) |>
+  add_residuals(birthweight_MLR) |>
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(
+    title = "model residuals against fitted values ", 
+    x = ("Fitted Value"),
+    y = ("Residuals"),
+    caption = "Fig.3 the relationship between model residuals and fitted values")
+```
+
+It can be seen from Fig.3 that the smooth curve fitted according to the residuals and fitted data is approximately a straight line with residuals equal to 0, and most of the residuals are uniformly and randomly distributed on both sides of the fitted curve, which may indicate that this MLR model is relatively reasonable.
+
+### Compare your model to two others
+
+```{r}
+# creating training and testing data
+cv_df = 
+  crossv_mc(birthweight_df, 100) 
+
+#fit data to three models and compare RMSE
+cv_df = 
+  cv_df |> 
+  mutate(
+    my_mod  = map(train, \(df) lm(bwt ~ bhead + blength + gaweeks + 
+                       malform + mheight + momage + 
+                       ppbmi + ppwt + smoken, data = df)),
+    main_mod  = map(train, \(df) lm(bwt ~ blength + gaweeks, data = df)),
+    interaction_mod  = map(train, \(df) lm(bwt ~ bhead*blength*babysex, data = df))) |>
+  
+  mutate(
+    rmse_my = map2_dbl(my_mod, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_main = map2_dbl(main_mod, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_interaction = map2_dbl(interaction_mod, test, \(mod, df) rmse(model = mod, data = df)))
+
+#shows the distribution of RMSE values for each candidate model
+cv_df |> 
+  select(starts_with("rmse")) |> 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") |> 
+  mutate(model = fct_inorder(model)) |> 
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_violin(aes(fill = model)) +
+  labs(
+    caption = "Fig.4 the distribution of RMSE values for each candidate model"
+  )
+```
+
+From Fig.4, it is noticeable that my model has the lowest RMSE, which indicates that my model fits the data better than the other two models, while the model that only considers the main effects between length at birth and gestational age as predictors on the birth weight has the highest RMSE, possibly indicating that its performance is relatively poor.
